@@ -92,3 +92,10 @@ En tu servidor de Discord:
 - **A ti** por probar mi primer bot en python.
 
 ---
+
+## Lista de tareas pendientes
+
+- [ ] **Arreglar** el hecho de que la música se detenga un minuto antes de que acabe la canción.  
+- [ ] **Agregar integración** con más plataformas como SoundCloud.  
+- [ ] **Borrar mensajes** al poner una canción para mantener el chat limpio.  
+- [ ] **Más ideas** que vayan surgiendo en el futuro...
