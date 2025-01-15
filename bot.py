@@ -1,160 +1,189 @@
-import discord
-from discord.ext import commands, tasks
-from discord.ui import Button, View, Select
-import yt_dlp as youtube_dl
+﻿import discord
+from discord import app_commands
+from discord.ext import commands
+import yt_dlp
 import asyncio
+import requests
+from discord.ui import Button, View
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="/", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# YT-DLP 
-ytdl_opts = {
-    'format': 'bestaudio/best',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
-    'noplaylist': True,
-}
-ytdl = youtube_dl.YoutubeDL(ytdl_opts)
+YOUTUBE_API_KEY = "YT_API KEY"
 
-# Song class
 class Song:
     def __init__(self, title, url, audio):
         self.title = title
         self.url = url
         self.audio = audio
 
-# MusicPlayer class
 class MusicPlayer:
     def __init__(self):
         self.queue = []
         self.current = None
-        self.volume = 1.0
+        self.inactivity_timeout = 30  # Tiempo de inactividad en segundos
 
-    async def play_next(self, ctx):
+        # Configuración de yt-dlp
+        ytdl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+            'noplaylist': True,
+        }
+        self.ytdl = yt_dlp.YoutubeDL(ytdl_opts)
+
+    async def play_next(self, interaction: discord.Interaction):
+        """Reproduce la siguiente canción en la cola."""
         if self.queue:
             self.current = self.queue.pop(0)
-            ffmpeg_options = f"-filter:a volume={self.volume}"
-            ctx.voice_client.play(
-                self.current.audio,
-                after=lambda e: asyncio.run_coroutine_threadsafe(self.play_next(ctx), bot.loop).result()
-            )
-            await send_controls(ctx, f"🎵 Reproduciendo ahora: **{self.current.title}**")
+            data = self.ytdl.extract_info(self.current.url, download=False)
+            audio_url = data['url']
+
+            if interaction.guild.voice_client:
+                interaction.guild.voice_client.play(
+                    discord.FFmpegPCMAudio(audio_url),
+                    after=lambda e: asyncio.run_coroutine_threadsafe(self.play_next(interaction), bot.loop).result()
+                )
+                # Enviar mensaje al canal de texto
+                if interaction.channel:
+                    view = create_music_controls(interaction)
+                    await interaction.channel.send(f"🎵 Reproduciendo ahora: **{self.current.title}**", view=view)
         else:
             self.current = None
-            await ctx.voice_client.disconnect()
+            await self.disconnect_after_inactivity(interaction)
+
+    async def disconnect_after_inactivity(self, interaction: discord.Interaction):
+        await asyncio.sleep(self.inactivity_timeout)
+        if interaction.guild.voice_client and not interaction.guild.voice_client.is_playing():
+            if interaction.channel:
+                await interaction.channel.send("⏹ Bot desconectado por inactividad.")
+            await interaction.guild.voice_client.disconnect()
 
 music_player = MusicPlayer()
 
-# Download YT songs
-async def download_audio(url):
-    data = ytdl.extract_info(url, download=False)
-    audio = discord.FFmpegPCMAudio(data['url'], options=f"-filter:a volume={music_player.volume}")
-    return Song(title=data['title'], url=url, audio=audio)
+def search_youtube(query, max_results=5):
+    params = {
+        "part": "snippet",
+        "q": query,
+        "key": YOUTUBE_API_KEY,
+        "type": "video",
+        "maxResults": max_results
+    }
+    response = requests.get("https://www.googleapis.com/youtube/v3/search", params=params)
+    data = response.json()
 
-# Buttons
-async def send_controls(ctx, message):
+    results = []
+    for item in data.get("items", []):
+        title = item["snippet"]["title"]
+        video_id = item["id"]["videoId"]
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        results.append(Song(title=title, url=url, audio=None))
+    return results
+
+def create_music_controls(interaction: discord.Interaction):
     pause_button = Button(label="⏸ Pausar", style=discord.ButtonStyle.danger)
     resume_button = Button(label="▶️ Reanudar", style=discord.ButtonStyle.success)
-    skip_button = Button(label="⏭ Siguiente", style=discord.ButtonStyle.primary)
     stop_button = Button(label="⏹ Detener", style=discord.ButtonStyle.danger)
 
     view = View()
-    view.add_item(pause_button)
-    view.add_item(resume_button)
-    view.add_item(skip_button)
-    view.add_item(stop_button)
 
-    async def pause_callback(interaction):
-        if ctx.voice_client.is_playing():
-            ctx.voice_client.pause()
-            await interaction.response.send_message("⏸ Canción pausada.")
+    async def pause_callback(interaction: discord.Interaction):
+        if interaction.guild.voice_client and interaction.guild.voice_client.is_playing():
+            interaction.guild.voice_client.pause()
+            await interaction.response.send_message("⏸ Canción pausada.", ephemeral=True)
 
-    async def resume_callback(interaction):
-        if ctx.voice_client.is_paused():
-            ctx.voice_client.resume()
-            await interaction.response.send_message("▶️ Canción reanudada.")
+    async def resume_callback(interaction: discord.Interaction):
+        if interaction.guild.voice_client and interaction.guild.voice_client.is_paused():
+            interaction.guild.voice_client.resume()
+            await interaction.response.send_message("▶️ Canción reanudada.", ephemeral=True)
 
-    async def skip_callback(interaction):
-        await music_player.play_next(ctx)
-        await interaction.response.send_message("⏭ Reproduciendo la siguiente canción.")
-
-    async def stop_callback(interaction):
-        music_player.queue.clear()
-        await ctx.voice_client.disconnect()
-        await interaction.response.send_message("⏹ Bot desconectado y cola vaciada.")
+    async def stop_callback(interaction: discord.Interaction):
+        if interaction.guild.voice_client:
+            await interaction.guild.voice_client.disconnect()
+            await interaction.response.send_message("⏹ Música detenida y bot desconectado.", ephemeral=True)
 
     pause_button.callback = pause_callback
     resume_button.callback = resume_callback
-    skip_button.callback = skip_callback
     stop_button.callback = stop_callback
 
-    await ctx.send(message, view=view)
+    view.add_item(pause_button)
+    view.add_item(resume_button)
+    view.add_item(stop_button)
 
-# Play songs from a URL
-@bot.command(name="play")
-async def play(ctx, *, url: str):
-    if not ctx.author.voice:
-        await ctx.send("¡Debes estar en un canal de voz para usar este comando!")
-        return
+    return view
 
-    if ctx.voice_client is None:
-        await ctx.author.voice.channel.connect()
+class MusicCommands(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
 
-    song = await download_audio(url)
-    music_player.queue.append(song)
+    @app_commands.command(name="play", description="Reproduce una canción desde un enlace.")
+    async def play(self, interaction: discord.Interaction, url: str):
+        await interaction.response.defer()
 
-    if ctx.voice_client.is_playing():
-        await ctx.send(f"🎶 **{song.title}** ha sido añadida a la cola.")
-    else:
-        await music_player.play_next(ctx)
+        if not interaction.user.voice:
+            await interaction.followup.send("¡Debes estar en un canal de voz para usar este comando!", ephemeral=True)
+            return
 
-# Search songs command
-@bot.command(name="search")
-async def search(ctx, *, query: str):
-    if not ctx.author.voice:
-        await ctx.send("¡Debes estar en un canal de voz para usar este comando!")
-        return
+        if interaction.guild.voice_client is None:
+            await interaction.user.voice.channel.connect()
 
-    async with ctx.typing():  # Mostrar que el bot está escribiendo mientras busca
-        results = ytdl.extract_info(f"ytsearch5:{query}", download=False)["entries"]
+        # Obtener detalles del video
+        data = music_player.ytdl.extract_info(url, download=False)
+        title = data.get("title", "Audio")
 
-    if not results:
-        await ctx.send("No se encontraron resultados para tu búsqueda.")
-        return
+        # Crear la canción con el título correcto
+        song = Song(title=title, url=url, audio=None)
+        music_player.queue.append(song)
 
-    options = [result["title"] for result in results]
-    urls = [result["webpage_url"] for result in results]
+        if interaction.guild.voice_client.is_playing():
+            await interaction.followup.send(f"🎶 **{song.title}** ha sido añadida a la cola.")
+        else:
+            await music_player.play_next(interaction)
 
-    select = Select(placeholder="Selecciona una canción...", options=[
-        discord.SelectOption(label=title[:100], value=url) for title, url in zip(options, urls)
-    ])
+    @app_commands.command(name="search", description="Busca canciones en YouTube.")
+    async def search(self, interaction: discord.Interaction, query: str):
+        await interaction.response.defer()
 
-    async def select_callback(interaction):
-        url = interaction.data["values"][0]
-        await interaction.response.send_message(f"Seleccionaste: {url}")
-        await play(ctx, url=url)
+        results = search_youtube(query)
 
-    select.callback = select_callback
+        options = [
+            discord.SelectOption(label=song.title[:100], value=song.url[:100]) for song in results
+        ]
 
-    view = View()
-    view.add_item(select)
-    await ctx.send("🎵 Aquí tienes los resultados:", view=view)
+        select = discord.ui.Select(placeholder="Selecciona una canción...", options=options)
 
-# Detect Inactivity
-@tasks.loop(seconds=30)
-async def check_inactivity():
-    for vc in bot.voice_clients:
-        if not vc.is_playing() and not vc.is_paused():
-            await vc.disconnect()
+        async def select_callback(interaction: discord.Interaction):
+            url = interaction.data["values"][0]
+            data = music_player.ytdl.extract_info(url, download=False)
+            title = data.get("title", "Audio")
+
+            # Crear la canción con el título correcto
+            song = Song(title=title, url=url, audio=None)
+
+            if interaction.guild.voice_client is None:
+                await interaction.user.voice.channel.connect()
+
+            music_player.queue.append(song)
+
+            if interaction.guild.voice_client.is_playing():
+                if interaction.channel:
+                    await interaction.channel.send(f"🎶 **{song.title}** ha sido añadida a la cola.")
+            else:
+                await music_player.play_next(interaction)
+
+        select.callback = select_callback
+
+        view = discord.ui.View()
+        view.add_item(select)
+        await interaction.followup.send("🎵 Aquí tienes los resultados:", view=view)
 
 @bot.event
 async def on_ready():
+    await bot.tree.sync()
     print(f"Conectado como {bot.user}")
-    if not check_inactivity.is_running():
-        check_inactivity.start()
 
-bot.run("Put ur token here")
+async def setup(bot):
+    await bot.add_cog(MusicCommands(bot))
+
+bot.setup_hook = lambda: asyncio.create_task(setup(bot))
+bot.run("DiscordToken")
