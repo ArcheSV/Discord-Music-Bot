@@ -95,7 +95,7 @@ En tu servidor de Discord:
 
 ## Lista de tareas pendientes
 
-- [ ] **Arreglar** el hecho de que la música se detenga un minuto antes de que acabe la canción.  
+- [ ] ~~**Arreglar** el hecho de que la música se detenga un minuto antes de que acabe la canción.~~
 - [ ] **Agregar integración** con más plataformas como SoundCloud.  
-- [ ] **Borrar mensajes** al poner una canción para mantener el chat limpio.  
+- [ ] ~~**Borrar mensajes** al poner una canción para mantener el chat limpio.~~
 - [ ] **Más ideas** que vayan surgiendo en el futuro...
