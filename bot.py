@@ -12,6 +12,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 YOUTUBE_API_KEY = "YT_API KEY"
 
+# Opciones del FFmpeg
+FFMPEG_OPTIONS = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn -ac 2 -ar 48000'
+
 class Song:
     def __init__(self, title, url, audio):
         self.title = title
@@ -27,7 +32,6 @@ class MusicPlayer:
         # Configuración de yt-dlp
         ytdl_opts = {
             'format': 'bestaudio/best',
-            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
             'noplaylist': True,
         }
         self.ytdl = yt_dlp.YoutubeDL(ytdl_opts)
