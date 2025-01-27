@@ -16,6 +16,7 @@ YOUTUBE_API_KEY = "YT_API KEY"
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn -ac 2 -ar 48000'
+}
 
 class Song:
     def __init__(self, title, url, audio):
